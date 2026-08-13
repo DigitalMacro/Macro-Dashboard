@@ -1,0 +1,23 @@
+# Secrets — never bake these into an image layer.
+.env
+.env.*
+
+# STIR exclusion (Phase 3 dependency, satisfied here): CME futures data
+# can't be redistributed without licensing. The route is already gated
+# behind NEXT_PUBLIC_ENABLE_STIR at runtime; this makes the files
+# genuinely absent from the built image rather than merely unreferenced.
+data/stir_fetcher.py
+models/stir.py
+
+# Local dev environments / caches — not needed in the image, and .venv
+# especially would bloat it by hundreds of MB.
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local paper-trading DB — should not ship pre-seeded into a fresh deploy.
+db/portfolio.db*
+
+.DS_Store

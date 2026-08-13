@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+out/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.tsbuildinfo
+backend/db/portfolio.db*
+.DS_Store
+.claude/settings.local.json
+PUBLISH_SPEC.md
+TODO.md
