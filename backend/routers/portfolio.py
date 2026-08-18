@@ -289,6 +289,7 @@ def _factor_block(positions: list) -> tuple:
 
     fm = model_service.get_factor_matrix()
     cols = model_service.select_factor_cols(fm)
+    cols, _gapped = model_service.exclude_currently_gapped(fm, cols)
     fm = fm[cols].dropna()
     factors_missing = [f for f in model_service.PREFERRED_FACTOR_COLS if f not in cols]
 

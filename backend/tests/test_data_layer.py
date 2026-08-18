@@ -23,7 +23,7 @@ REQUIRED_FACTORS = [
     "real_rates",
     "cb_rate_expectations",
     "dm_fx",
-    "cb_qt_expectations",
+    "rate_vol",
     "risk_aversion",
     "market",
 ]
@@ -35,12 +35,6 @@ START = "2020-01-01"
 def factor_df():
     from data.factor_fetcher import build_factor_dataframe
     return build_factor_dataframe(start=START)
-
-
-@pytest.fixture(scope="module")
-def factor_levels():
-    from data.factor_fetcher import get_factor_levels
-    return get_factor_levels(start=START)
 
 
 def test_all_factors_present(factor_df):
@@ -69,11 +63,6 @@ def test_no_all_nan_factor(factor_df):
         if col in factor_df.columns:
             n_valid = factor_df[col].dropna().__len__()
             assert n_valid > 100, f"{col} has only {n_valid} non-NaN values"
-
-
-def test_factor_levels_not_empty(factor_levels):
-    """Raw factor levels must have rows."""
-    assert len(factor_levels) > 0
 
 
 def test_asset_validation_spy():

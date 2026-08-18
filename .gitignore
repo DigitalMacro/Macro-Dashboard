@@ -15,3 +15,5 @@ backend/db/portfolio.db*
 .claude/settings.local.json
 PUBLISH_SPEC.md
 TODO.md
+.vercel
+.env*

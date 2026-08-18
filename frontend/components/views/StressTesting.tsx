@@ -17,7 +17,7 @@ import { Loader2 } from "lucide-react";
 const FACTOR_COLS = [
   "economic_growth", "metals", "energy", "fwd_growth_expectations",
   "inflation", "ig_credit_spread", "10y_yield", "real_rates",
-  "cb_rate_expectations", "dm_fx", "cb_qt_expectations", "risk_aversion",
+  "cb_rate_expectations", "dm_fx", "rate_vol", "risk_aversion",
 ];
 
 type Freshness = { asOf: string | null; source: string | null };

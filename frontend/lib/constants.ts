@@ -11,7 +11,7 @@ export const FACTOR_LABELS: Record<string, string> = {
   real_rates:              "Real rates",
   cb_rate_expectations:    "CB rate expectations",
   dm_fx:                   "DM FX",
-  cb_qt_expectations:      "CB QT expectations",
+  rate_vol:                "Rate Volatility (MOVE)",
   risk_aversion:           "Risk aversion",
   market:                  "Market",
 };
@@ -23,7 +23,7 @@ export const FACTOR_BUCKETS: Record<string, string[]> = {
   ],
   "Financial conditions": [
     "ig_credit_spread", "10y_yield", "real_rates",
-    "cb_rate_expectations", "dm_fx", "cb_qt_expectations",
+    "cb_rate_expectations", "dm_fx", "rate_vol",
   ],
   "Risk appetite": ["risk_aversion"],
 };
@@ -38,8 +38,8 @@ export const FACTOR_UNITS: Record<string, string> = {
   "10y_yield":             "bp",
   real_rates:              "bp",
   cb_rate_expectations:    "bp (fwd spread)",
-  dm_fx:                   "% return (TWI)",
-  cb_qt_expectations:      "pts (MOVE)",
+  dm_fx:                   "% return (DXY)",
+  rate_vol:                "pts (MOVE)",
   risk_aversion:           "pts (VIX)",
   market:                  "% return",
 };
@@ -58,8 +58,18 @@ export const PROXY_FIDELITY: Record<string, "perfect" | "high" | "medium"> = {
   "10y_yield":             "perfect",
   real_rates:              "perfect",
   cb_rate_expectations:    "medium",
-  dm_fx:                   "high",
-  cb_qt_expectations:      "medium",
+  // Downgraded from "high" (was rated for DTWEXBGS, a broad trade-weighted
+  // basket including EM currencies). DX-Y.NYB correlates 0.73 with what
+  // this factor previously measured — in the same range as the
+  // ig_credit_spread downgrade (0.63) above, not a like-for-like swap — and
+  // is ~58% EUR-weighted on fixed 1973-vintage weights, so it behaves
+  // closer to a concentrated EUR/USD proxy than a diversified dollar
+  // measure. Genuinely DM-only now (fixes the name-to-series gap
+  // DTWEXBGS had), which is a real improvement "medium" doesn't capture on
+  // its own — but composition concentration and the correlation gap both
+  // argue against "high". See factor_fetcher.py F10 comment.
+  dm_fx:                   "medium",
+  rate_vol:                "medium",
   risk_aversion:           "perfect",
 };
 
@@ -73,8 +83,8 @@ export const PROXY_SOURCE: Record<string, string> = {
   "10y_yield":             "FRED: DGS10",
   real_rates:              "FRED: DFII10",
   cb_rate_expectations:    "FRED: THREEFF1 − DGS1",
-  dm_fx:                   "FRED: DTWEXBGS",
-  cb_qt_expectations:      "Yahoo Finance: ^MOVE",
+  dm_fx:                   "Yahoo Finance: DX-Y.NYB",
+  rate_vol:                "Yahoo Finance: ^MOVE",
   risk_aversion:           "Yahoo Finance: ^VIX",
 };
 
@@ -97,7 +107,7 @@ export const FACTOR_COLOURS: Record<string, string> = {
   real_rates:              "#b45309",
   cb_rate_expectations:    "#fbbf24",
   dm_fx:                   "#fde68a",
-  cb_qt_expectations:      "#fef3c7",
+  rate_vol:                "#fef3c7",
   risk_aversion:           "#ef4444",
   market:                  "#6b7280",
 };
@@ -128,7 +138,7 @@ export const SHOCK_RANGES: Record<string, { min: number; max: number; step: numb
   metals:                  { min: -4, max: 4, step: 0.1, label: "std devs" },
   fwd_growth_expectations: { min: -4, max: 4, step: 0.1, label: "std devs" },
   cb_rate_expectations:    { min: -4, max: 4, step: 0.1, label: "std devs" },
-  cb_qt_expectations:      { min: -4, max: 4, step: 0.1, label: "std devs" },
+  rate_vol:                { min: -4, max: 4, step: 0.1, label: "std devs" },
 };
 
 // Heatmap colour thresholds (exposure to 1 std dev factor move)

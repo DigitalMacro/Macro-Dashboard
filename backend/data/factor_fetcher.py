@@ -15,13 +15,19 @@ logger = logging.getLogger(__name__)
 FRED_API_KEY = os.environ.get("FRED_API_KEY")
 # Requested floor — most series (Treasuries, VIX, Baa/Aaa spreads) resolve
 # back to 1990-03-27 or earlier. The fully-joined 12-factor matrix does NOT
-# see 1990, though: dm_fx (DTWEXBGS, the Fed's "Broad" dollar index) only
-# starts 2006-01-02 — that's a real methodology-vintage limit on that series,
-# not a fetch issue — and since every factor is inner-joined, dm_fx alone
-# caps the fully-joined window at 2006-03-27 regardless of this constant.
+# see 1990, though: inflation (T5YIE) and real_rates (DFII10) are both
+# TIPS-derived and only start 2003-01-02 — the U.S. TIPS market itself
+# doesn't have reliable 5Y breakevens/10Y real yields before then. Every
+# factor is inner-joined and normalise()'s rolling-std needs a ~60-business-
+# day warmup, so these two alone cap the fully-joined window at 2003-03-27
+# regardless of this constant. dm_fx (DX-Y.NYB) is NOT the binding
+# constraint — confirmed 2026-08-17 when swapping dm_fx off DTWEXBGS (which
+# *was* the binding constraint, at 2006-03-27, before that swap).
 # Don't assume 1990-01-01 here means the model sees 1990 — it means the
-# request asks for 1990; dm_fx is what actually decides what comes back.
-# See TODO.md for the DTWEXM swap that would remove this ceiling.
+# request asks for 1990; T5YIE/DFII10 are what actually decide what comes
+# back. See TODO.md for the pre-2003 history question (replacing the
+# TIPS-derived factors) — a materially larger question than any single
+# series swap, not yet evaluated.
 START_DATE   = "1990-01-01"
 NORM_WINDOW  = 250  # MFERM whitepaper §2.3
 
@@ -40,7 +46,6 @@ FRED_SERIES = {
     "T5YIFR":        "5Y5Y Fwd Inflation",
     "THREEFF1":      "1Y Fitted Fwd Rate",
     "BAA10Y":        "Moody's Baa Spread to 10Y Treasury",
-    "DTWEXBGS":      "USD Broad TWI",
     "VIXCLS":        "VIX (FRED)",
     "CFNAI":         "Chicago Fed CFNAI",
     "DCOILWTICO":    "WTI Crude (FRED)",
@@ -54,7 +59,6 @@ YAHOO_TICKERS = {
     "^GSPC":    "S&P 500",
     "^MOVE":    "MOVE Index",
     "DX-Y.NYB": "DXY Dollar Index",
-    "HYG":      "iShares HY ETF",
 }
 
 
@@ -72,6 +76,31 @@ def fetch_fred_series(series_id: str, start: str = START_DATE,
             if attempt < _retries - 1:
                 time.sleep(_delay * (attempt + 1))
     raise last_exc
+
+
+GAP_THRESHOLD_BUSINESS_DAYS = 5  # ~1 trading week; below this is routine holiday noise
+
+
+def longest_business_day_gap(series: pd.Series, window_start, window_end) -> int:
+    """
+    Longest run of consecutive missing business days for `series` within
+    [window_start, window_end]. Shared by fetch_yahoo()'s logging check and
+    model_service.exclude_currently_gapped() — one gap definition, two
+    consumers, so the threshold can't drift between them.
+    """
+    expected = pd.bdate_range(window_start, window_end)
+    if len(expected) == 0:
+        return 0
+    present = set(pd.DatetimeIndex(series.dropna().index).normalize())
+    missing_mask = ~expected.isin(present)
+    longest = current = 0
+    for is_missing in missing_mask:
+        if is_missing:
+            current += 1
+            longest = max(longest, current)
+        else:
+            current = 0
+    return longest
 
 
 def fetch_yahoo(ticker: str, start: str = START_DATE,
@@ -110,6 +139,19 @@ def fetch_yahoo(ticker: str, start: str = START_DATE,
             # Strip timezone so index aligns with FRED (tz-naive) data
             if s.index.tz is not None:
                 s.index = s.index.tz_localize(None)
+            # Log-only: a hole in the middle of an otherwise-normal response
+            # (confirmed live on ^MOVE, 2026-07-20 to 2026-08-12 — real
+            # vendor gap, not a fetch bug, see TODO.md item 5). Retrying
+            # doesn't help this class of failure, so this doesn't raise —
+            # it surfaces via the log and, for current-window model fits,
+            # via exclude_currently_gapped()/factors_missing instead.
+            gap = longest_business_day_gap(s, s.index.min(), s.index.max())
+            if gap >= GAP_THRESHOLD_BUSINESS_DAYS:
+                logger.warning(
+                    "%s has a %d-business-day gap somewhere in its history "
+                    "(%s to %s) — data present overall, but not contiguous",
+                    ticker, gap, s.index.min().date(), s.index.max().date(),
+                )
             return s
         except Exception as e:
             last_exc = e
@@ -229,15 +271,29 @@ def build_factor_dataframe(start: str = START_DATE) -> pd.DataFrame:
         cb_rt = (threeff1 - dgs1_aligned).dropna()
         factors["cb_rate_expectations"] = normalise(cb_rt)
 
-    # F10: DM FX (USD Broad TWI return)
-    dtwexbgs = raw.get("DTWEXBGS", pd.Series(dtype=float))
-    if not dtwexbgs.empty:
-        factors["dm_fx"] = normalise(dtwexbgs, is_price=True)
+    # F10: DM FX (DXY return). Was DTWEXBGS (FRED, trade-weighted, includes
+    # EM currencies) — swapped 2026-08-17 for two reasons: DTWEXBGS was the
+    # single binding constraint on the fully-joined matrix (2006-03-27), and
+    # "dm_fx" claimed a developed-markets-only measure DTWEXBGS didn't
+    # provide. DX-Y.NYB (ICE DXY) is genuinely DM-only (EUR/JPY/GBP/CAD/
+    # SEK/CHF) so the name is now accurate, and it clears the 2006
+    # constraint entirely (Yahoo history back to 1990+). Correlation to the
+    # DTWEXBGS-derived factor it replaces: 0.73 Pearson / 0.72 Spearman over
+    # the 2006-2026 overlap — see TODO.md for the full writeup, including
+    # the ~58% EUR concentration this trades off against DTWEXBGS's broader
+    # basket. DTWEXM (FRED, trade-weighted, DM-only) was evaluated and
+    # rejected: discontinued by the Fed as of 2019-12-31, so it can't serve
+    # a current-window fit regardless of its better composition.
+    dxy = raw.get("DX-Y.NYB", pd.Series(dtype=float))
+    if not dxy.empty:
+        factors["dm_fx"] = normalise(dxy, is_price=True)
 
-    # F11: CB QT Expectations (MOVE Index diff)
+    # F11: Rate Volatility (normalised MOVE index level — not QT-specific;
+    # renamed from cb_qt_expectations, which claimed a QT signal this
+    # derivation never isolated. See TODO.md item 5.)
     move = raw.get("^MOVE", pd.Series(dtype=float))
     if not move.empty:
-        factors["cb_qt_expectations"] = normalise(move)
+        factors["rate_vol"] = normalise(move)
 
     # F12: Risk Aversion (VIX diff)
     vixcls = raw.get("VIXCLS", pd.Series(dtype=float))
@@ -253,43 +309,3 @@ def build_factor_dataframe(start: str = START_DATE) -> pd.DataFrame:
         factors["market"] = normalise(gspc, is_price=True)
 
     return pd.DataFrame(factors).dropna(how="all")
-
-
-def get_factor_levels(start: str = START_DATE) -> pd.DataFrame:
-    """
-    Returns raw level data (not normalised) for dashboard display.
-    Values in their native units (%, bp, index points).
-    """
-    raw = {}
-    for sid in ["DGS10", "DFII10", "T5YIE", "BAA10Y",
-                "DTWEXBGS", "VIXCLS", "CFNAI", "DGS5", "DGS30"]:
-        try:
-            raw[sid] = fetch_fred_series(sid, start)
-        except Exception as e:
-            logger.warning("FRED %s failed: %s", sid, e)
-            raw[sid] = pd.Series(dtype=float)
-
-    for ticker in ["CL=F", "HG=F", "^VIX", "^GSPC", "^MOVE", "DX-Y.NYB"]:
-        try:
-            raw[ticker] = fetch_yahoo(ticker, start)
-        except Exception as e:
-            logger.warning("Yahoo %s failed: %s", ticker, e)
-            raw[ticker] = pd.Series(dtype=float)
-
-    levels = pd.DataFrame({
-        "economic_growth":          raw.get("CFNAI", pd.Series(dtype=float)),
-        "metals":                   raw.get("HG=F",  pd.Series(dtype=float)),
-        "energy":                   raw.get("CL=F",  pd.Series(dtype=float)),
-        "fwd_growth_expectations":  (raw.get("DGS30", pd.Series(dtype=float)) -
-                                     raw.get("DGS5",  pd.Series(dtype=float))),
-        "inflation":                raw.get("T5YIE",        pd.Series(dtype=float)),
-        "ig_credit_spread":         raw.get("BAA10Y", pd.Series(dtype=float)),
-        "10y_yield":                raw.get("DGS10",  pd.Series(dtype=float)),
-        "real_rates":               raw.get("DFII10", pd.Series(dtype=float)),
-        "cb_rate_expectations":     raw.get("DTWEXBGS", pd.Series(dtype=float)),
-        "dm_fx":                    raw.get("DTWEXBGS",      pd.Series(dtype=float)),
-        "cb_qt_expectations":       raw.get("^MOVE",  pd.Series(dtype=float)),
-        "risk_aversion":            raw.get("^VIX",   pd.Series(dtype=float)),
-        "market":                   raw.get("^GSPC",  pd.Series(dtype=float)),
-    })
-    return levels.dropna(how="all")

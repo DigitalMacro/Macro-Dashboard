@@ -6,7 +6,7 @@ All endpoints the Next.js frontend needs.
 import os
 import math
 from typing import Optional
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,7 +15,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from data.factor_fetcher import build_factor_dataframe, get_factor_levels, FRED_SERIES, YAHOO_TICKERS
 from data.asset_fetcher import validate_ticker, fetch_asset_returns
 from models.attribution import compute_return_attribution, compute_point_risk, compute_rolling_risk
 from models.stress import run_historical_stress, run_uncorrelated_stress, run_correlated_stress
@@ -106,9 +105,10 @@ def asset_validate(ticker: str):
 
 # ── PLSR model outputs ────────────────────────────────────────────────────────
 
-PREFERRED_FACTOR_COLS = model_service.PREFERRED_FACTOR_COLS
-_select_factor_cols   = model_service.select_factor_cols
-_get_plsr             = model_service.get_plsr
+PREFERRED_FACTOR_COLS   = model_service.PREFERRED_FACTOR_COLS
+_select_factor_cols     = model_service.select_factor_cols
+_exclude_currently_gapped = model_service.exclude_currently_gapped
+_get_plsr               = model_service.get_plsr
 
 
 @app.get("/api/model/{ticker}/exposures")
@@ -148,12 +148,21 @@ def get_exposures(ticker: str, start: str = Query("2020-01-01")):
 def get_attribution(
     ticker: str,
     start: str = Query("2024-01-01"),
-    end: str   = Query(datetime.today().strftime("%Y-%m-%d")),
+    # Optional[str] = Query(None), not a computed default: FastAPI evaluates
+    # a Query() default once, at import time, not per request — a literal
+    # datetime.today() here freezes to whatever day the server process
+    # started and never updates until restart. compute_return_attribution
+    # already treats a falsy `end` as "no upper bound", which is also more
+    # correct than filtering to a hardcoded "today" that may not have data
+    # yet — so there's no substitute value to compute here at all.
+    end: Optional[str] = Query(None),
 ):
     """Return attribution time series for the selected date range."""
     try:
         fm = _get_factor_matrix(DATA_START)
-        cols = _select_factor_cols(fm); fm = fm[cols].dropna()
+        cols = _select_factor_cols(fm)
+        cols, _gapped = _exclude_currently_gapped(fm, cols)
+        fm = fm[cols].dropna()
         ar = _get_asset_returns(ticker.upper(), DATA_START)
         result = compute_return_attribution(fm, ar, start=start, end=end,
                                              expected_factors=PREFERRED_FACTOR_COLS)
@@ -178,7 +187,9 @@ def get_risk(
     """Point-in-time risk decomposition."""
     try:
         fm = _get_factor_matrix(DATA_START)
-        cols = _select_factor_cols(fm); fm = fm[cols].dropna()
+        cols = _select_factor_cols(fm)
+        cols, _gapped = _exclude_currently_gapped(fm, cols)
+        fm = fm[cols].dropna()
         ar = _get_asset_returns(ticker.upper(), DATA_START)
         result = compute_point_risk(fm, ar, as_of=date,
                                      expected_factors=PREFERRED_FACTOR_COLS)
@@ -201,7 +212,9 @@ def get_rolling_risk(ticker: str, roll_window: int = Query(30)):
     """Rolling vol decomposition time series."""
     try:
         fm = _get_factor_matrix(DATA_START)
-        cols = _select_factor_cols(fm); fm = fm[cols].dropna()
+        cols = _select_factor_cols(fm)
+        cols, _gapped = _exclude_currently_gapped(fm, cols)
+        fm = fm[cols].dropna()
         ar = _get_asset_returns(ticker.upper(), DATA_START)
         result = compute_rolling_risk(fm, ar, roll_window=roll_window,
                                        expected_factors=PREFERRED_FACTOR_COLS)
@@ -236,7 +249,9 @@ class CorrelatedStressRequest(BaseModel):
 def stress_historical(req: HistoricalStressRequest):
     try:
         fm = _get_factor_matrix(DATA_START)
-        cols = _select_factor_cols(fm); fm = fm[cols].dropna()
+        cols = _select_factor_cols(fm)
+        cols, _gapped = _exclude_currently_gapped(fm, cols)
+        fm = fm[cols].dropna()
         ar = _get_asset_returns(req.ticker.upper(), DATA_START)
         result = run_historical_stress(fm, ar, req.scenario,
                                         expected_factors=PREFERRED_FACTOR_COLS)
@@ -257,7 +272,9 @@ def stress_historical(req: HistoricalStressRequest):
 def stress_uncorrelated(req: UncorrelatedStressRequest):
     try:
         fm = _get_factor_matrix(DATA_START)
-        cols = _select_factor_cols(fm); fm = fm[cols].dropna()
+        cols = _select_factor_cols(fm)
+        cols, _gapped = _exclude_currently_gapped(fm, cols)
+        fm = fm[cols].dropna()
         ar = _get_asset_returns(req.ticker.upper(), DATA_START)
         result = run_uncorrelated_stress(fm, ar, req.shocks,
                                           expected_factors=PREFERRED_FACTOR_COLS)
@@ -274,7 +291,9 @@ def stress_uncorrelated(req: UncorrelatedStressRequest):
 def stress_correlated(req: CorrelatedStressRequest):
     try:
         fm = _get_factor_matrix(DATA_START)
-        cols = _select_factor_cols(fm); fm = fm[cols].dropna()
+        cols = _select_factor_cols(fm)
+        cols, _gapped = _exclude_currently_gapped(fm, cols)
+        fm = fm[cols].dropna()
         ar = _get_asset_returns(req.ticker.upper(), DATA_START)
         result = run_correlated_stress(fm, ar, req.core_factor, req.shock_value,
                                         expected_factors=PREFERRED_FACTOR_COLS)
@@ -388,4 +407,4 @@ if STIR_ENABLED:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "timestamp": datetime.utcnow().isoformat()}
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}

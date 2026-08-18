@@ -28,8 +28,8 @@ export function DegradedModelBanner({
         <p className="mt-0.5 text-amber-800">
           {missingLabels.join(", ")} {factorsMissing.length === 1 ? "isn't" : "aren't"} in this fit.
           The model redistributes {factorsMissing.length === 1 ? "its" : "their"} explained variance
-          across the remaining {nFactors} — every exposure below reflects that adjustment, not just
-          the missing {factorsMissing.length === 1 ? "factor" : "factors"}.
+          across the remaining {nFactors} — every figure below (exposures, risk, impact) reflects
+          that adjustment, not just the missing {factorsMissing.length === 1 ? "factor" : "factors"}.
         </p>
       </div>
     </div>

@@ -17,7 +17,7 @@ START_FULL  = "2009-01-01"  # for historical stress tests (needs 2018+ data)
 FACTOR_COLS = [
     "economic_growth", "metals", "energy", "fwd_growth_expectations",
     "inflation", "ig_credit_spread", "10y_yield", "real_rates",
-    "cb_rate_expectations", "dm_fx", "cb_qt_expectations", "risk_aversion",
+    "cb_rate_expectations", "dm_fx", "rate_vol", "risk_aversion",
 ]
 
 
